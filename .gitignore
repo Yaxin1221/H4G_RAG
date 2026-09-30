@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# fetched corpus (regenerate with `make ingest`)
+data/raw/
+data/corpus.json
+data/index.json
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# misc
+.DS_Store
