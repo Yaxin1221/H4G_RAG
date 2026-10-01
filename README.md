@@ -105,19 +105,54 @@ note, and `MAX_OUTPUT_TOKENS` (default 1500) is the backstop. Both can be set in
 
 ## Quickstart
 
+You need `git`, `make` and Python 3 (developed on 3.14; 3.10 or newer should work), plus an
+Infomaniak account with AI Tools enabled. macOS and Linux work as is; on Windows use WSL.
+
+**1. Clone and install**
+
 ```bash
-make setup                  # venv + deps, copies .env.example -> .env
-$EDITOR .env                # set INFOMANIAK_API_KEY and INFOMANIAK_PRODUCT_ID (optional: INFOMANIAK_MODEL)
-make ingest                 # ~10s: pull all 800 pages from the WP REST API
-make index                  # build the lookup tables
-make check                  # offline checks, no API key needed
-make ask Q="Who provides legal aid to refugees in Jordan?"
-make serve                  # http://127.0.0.1:8000
+git clone https://github.com/Yaxin1221/H4G_RAG.git
+cd H4G_RAG
+make setup                  # creates .venv, installs deps, copies .env.example -> .env
 ```
 
-To find the two Infomaniak values: create an API token with scope `ai-tools` at
-[manager.infomaniak.com](https://manager.infomaniak.com), then
-`GET https://api.infomaniak.com/1/ai` with that token returns the product id.
+**2. Add your Infomaniak credentials**
+
+Create an API token with scope `ai-tools` at
+[manager.infomaniak.com](https://manager.infomaniak.com), then look up the product id
+with it:
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" https://api.infomaniak.com/1/ai
+```
+
+Put both in `.env`, which is git-ignored:
+
+```bash
+INFOMANIAK_API_KEY=YOUR_TOKEN
+INFOMANIAK_PRODUCT_ID=12345
+# INFOMANIAK_MODEL=google/gemma-4-31B-it    # optional, this is the default
+```
+
+**3. Fetch the site and build the lookup**
+
+The fetched pages are not in the repo, so this step is required after cloning.
+
+```bash
+make ingest                 # ~10s: pull all 800 pages from the WP REST API
+make index                  # build data/index.json and data/corpus.json
+make check                  # offline checks, no API key needed; should end "all checks passed"
+```
+
+**4. Ask something**
+
+```bash
+make ask Q="Who provides legal aid to refugees in Jordan?"    # one question from the CLI
+make serve                                                    # web UI at http://127.0.0.1:8000
+```
+
+`make help` lists every target. To update later: `git pull`, then `make setup` if
+`requirements.txt` changed, then `make refresh` to re-pull the site.
 
 The WordPress REST API serves every published page **without authentication**, so no
 WordPress credentials are needed. `WP_USER` / `WP_APP_PASSWORD` in `.env` exist only if
