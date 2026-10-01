@@ -105,8 +105,8 @@ note, and `MAX_OUTPUT_TOKENS` (default 1500) is the backstop. Both can be set in
 
 ## Quickstart
 
-You need `git`, `make` and Python 3 (developed on 3.14; 3.10 or newer should work), plus an
-Infomaniak account with AI Tools enabled. macOS and Linux work as is; on Windows use WSL.
+You need `git`, `make` and Python 3 (developed on 3.14; 3.10 or newer should work), plus the
+project's Infomaniak token (see step 2). macOS and Linux work as is; on Windows use WSL.
 
 **1. Clone and install**
 
@@ -118,20 +118,25 @@ make setup                  # creates .venv, installs deps, copies .env.example 
 
 **2. Add your Infomaniak credentials**
 
-Create an API token with scope `ai-tools` at
-[manager.infomaniak.com](https://manager.infomaniak.com), then look up the product id
-with it:
+For now everyone uses one shared token. Ask the repo owner
+([@Yaxin1221](https://github.com/Yaxin1221)) for the API token and the product id; they
+are sent privately and are not in the repo. Put both in `.env`:
+
+```bash
+INFOMANIAK_API_KEY=the-token-you-were-sent
+INFOMANIAK_PRODUCT_ID=the-product-id-you-were-sent
+# INFOMANIAK_MODEL=google/gemma-4-31B-it    # optional, this is the default
+```
+
+`.env` is git-ignored. Keep the token out of commits, issues and chat channels: usage on
+it is billed to one account.
+
+If you have your own Infomaniak account instead: create an API token with scope
+`ai-tools` at [manager.infomaniak.com](https://manager.infomaniak.com), then look up the
+product id with it:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN" https://api.infomaniak.com/1/ai
-```
-
-Put both in `.env`, which is git-ignored:
-
-```bash
-INFOMANIAK_API_KEY=YOUR_TOKEN
-INFOMANIAK_PRODUCT_ID=12345
-# INFOMANIAK_MODEL=google/gemma-4-31B-it    # optional, this is the default
 ```
 
 **3. Fetch the site and build the lookup**
