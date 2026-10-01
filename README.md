@@ -103,6 +103,100 @@ Answer length is also enforced in code, because "be brief" is not reliably obeye
 `ANSWER_CHAR_LIMIT` (default 2000) cuts at the next sentence or line end and appends a
 note, and `MAX_OUTPUT_TOKENS` (default 1500) is the backstop. Both can be set in `.env`.
 
+## How a question is answered
+
+The split between country-specific and other questions is not made in code: the model
+picks the tool, steered by the system prompt (`INSTRUCTIONS` in `app/chat.py`). Everything
+after that choice (lookup, search, grounding check) is deterministic.
+
+```
+                              ┌──────────────────┐
+                              │  User question   │
+                              └────────┬─────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+                     │ server.py: 30 questions/hour per  │
+                     │ IP, non-empty, max 2000 chars     │
+                     └─────────────────┬─────────────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+                     │ chat.py: system prompt + last 10  │
+                     │ user turns + question + 4 tools   │
+                     └─────────────────┬─────────────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+        ┌───────────▶│  MODEL decides what it needs      │◀───────────────┐
+        │            │  (max 6 tool rounds)              │                │
+        │            └──┬──────────────┬──────────────┬──┘                │
+        │               │              │              │                   │
+        │   COUNTRY-SPECIFIC     NOT COUNTRY-SPECIFIC │ no tool needed    │
+        │               │              │              │ (or origin vs     │
+        │               ▼              ▼              │ asylum country    │
+        │   ┌──────────────────┐ ┌──────────────────┐ │ unclear: ask      │
+        │   │ get_country_page │ │ search_site      │ │ the user)         │
+        │   │ country +        │ │ scope "thematic" │ │                   │
+        │   │ category:        │ │ BM25 keywords    │ │                   │
+        │   │ legal-assistance │ │ over ~98 pages,  │ │                   │
+        │   │ | coi | lgbtqi   │ │ top 6 hits       │ │                   │
+        │   └────────┬─────────┘ └────────┬─────────┘ │                   │
+        │            ▼                    ▼           │                   │
+        │   alias / spelling      ┌── any hits? ──┐   │                   │
+        │   resolved, exact       │ no            │ yes                   │
+        │   table lookup          ▼               ▼   │                   │
+        │    │         │      "No matches"   top page │                   │
+        │   hit       miss    (reword once   ≤ 45k    │                   │
+        │    │         │      or say not     chars?   │                   │
+        │    ▼         ▼      found)         │    │   │                   │
+        │  whole    country known,          yes   no  │                   │
+        │  page     category missing:        │    │   │                   │
+        │  + URL    "these directories       ▼    ▼   │                   │
+        │  + last   exist instead"        top page  titles only,          │
+        │  updated  country unknown:      in full   model opens one       │
+        │           close names, or       + other   with get_page         │
+        │           "not covered"         titles                          │
+        │               │                    │                │           │
+        └───────────────┴── tool results added to the conversation ───────┘
+                                                      │
+                             model writes text, no more tool calls
+                                                      ▼
+                     ┌───────────────────────────────────┐
+                     │ Draft, cut at ~2000 chars on a    │
+                     │ sentence end                      │
+                     └─────────────────┬─────────────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+                     │ guard.py: every URL, email, phone │
+                     │ number, ISO date must appear in a │
+                     │ tool result; no fake "tool call"  │
+                     └──────┬─────────────────────┬──────┘
+                        all grounded          violations
+                            │                     ▼
+                            │        repair near-miss email/URL
+                            │        (≥ 0.9 match to a real one)
+                            │                     │
+                            │              still violations?
+                            │               │            │
+                            │           1st time     2nd time
+                            │               │            │
+                            │        hidden retry    scrub: "[link removed…]"
+                            │        with correction or fallback message if
+                            │        (back to MODEL) it faked a tool call
+                            ▼                            │
+                     ┌───────────────────────────────────┴┐
+                     │ Answer + source links shown;       │
+                     │ history returned to the browser    │
+                     └────────────────────────────────────┘
+```
+
+Not drawn, to keep the chart readable:
+
+- **Mixed questions** (e.g. "gender-based claims in Jordan") take both branches in the
+  same turn: the thematic page for the framework, the country page for who can help.
+- **"Which countries do you cover?"** uses `list_countries`, which returns the names for
+  one directory.
+- **Hard stops**: a provider content filter, hitting the output token limit, or more than
+  6 tool rounds each end the turn with an error instead of an answer.
+
 ## Quickstart
 
 You need `git`, `make` and Python 3 (developed on 3.14; 3.10 or newer should work), plus the
