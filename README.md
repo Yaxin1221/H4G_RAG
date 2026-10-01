@@ -333,6 +333,15 @@ Run of 1 October 2026: 15 questions × 2 repeats, so 30 answers per model.
 
 - **Right first tool** counts the 12 questions that have an expected tool (24 answers).
   Both Apertus misses are the medical-evidence question, answered without any tool call.
+- **Apertus skipped the lookup and answered from memory.** On the medical-evidence
+  question it made no tool call in either run, so both answers (212 and 288 words) come
+  from the model's training knowledge and not from the site. One of them points the user
+  to a thematic page titled "Medical evidence in torture-based asylum claims", which does
+  not exist; the real page is "Medical Evidence in Refugee Status Determination
+  Procedures", and Apertus never opened it. The guard let both answers through, because
+  they contain no URL, email, phone number or date for it to check. Gemma and Qwen called
+  `search_site` on this question in both runs. Nothing in the code yet forces a tool call
+  before an answer.
 - **Guard corrections**: all three Gemma cases were fixed by the one retry. One Apertus
   answer still had two invented links after the retry, and they were scrubbed.
 - **Gemma's time is uneven**: 8 of its 30 answers took over 30 s (the slowest 103 s),
@@ -361,7 +370,8 @@ tokens for one question, summed over all its model calls (tool rounds and guard 
   21.8k (gang-based claims, which needs the second call).
 - **The floor is about 1.3k input tokens**: an answer with no tool call sends only the
   system prompt and the tool definitions. Apertus answered the medical-evidence question
-  this way, which lowers its broad average without being a better result.
+  this way (from memory, see Results above), so its lower broad average and part of its
+  lower monthly price come from skipping the lookup, not from being more efficient.
 - A guard retry sends the whole conversation once more. The most expensive single answer
   (31.6k input tokens, Apertus on Türkiye) was a retry.
 - These are 8 and 4 questions, each asked twice per model, so read the averages as rough.
