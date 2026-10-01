@@ -314,7 +314,8 @@ not exist, thematic questions, a prediction request, a deadline question, one in
 through each model with the hard answer cap off. It prints mechanical scores per model
 (right first tool, ungrounded URLs and contacts, answer length, tokens, latency, guard
 retries and scrubs) and writes every answer to `data/eval/answers.md`. The scores do not
-measure answer quality; read the answers for that. `data/eval/` is git-ignored.
+measure answer quality; read the answers for that. The run behind the results below is committed in
+[data/eval/](data/eval/) (`compare.json` and `answers.md`); a new run overwrites both.
 
 ### Results
 
