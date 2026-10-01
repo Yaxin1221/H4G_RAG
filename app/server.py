@@ -71,8 +71,8 @@ async def chat(request: Request) -> StreamingResponse:
     def sse():
         try:
             for ev in answer(question, history):
-                if ev["type"] == "usage":          # server-side telemetry only
-                    print(f"usage {ev}", flush=True)
+                if ev["type"] in ("usage", "guard"):   # server-side telemetry only
+                    print(f"{ev['type']} {ev}", flush=True)
                     continue
                 if ev["type"] == "done":
                     yield f"data: {json.dumps({'type': 'done', 'history': _serialisable(ev['history'])})}\n\n"
@@ -91,14 +91,8 @@ async def chat(request: Request) -> StreamingResponse:
 
 
 def _serialisable(history: list) -> list:
-    """SDK content blocks -> plain JSON so the browser can hand history back."""
-    out = []
-    for msg in history:
-        content = msg["content"]
-        if isinstance(content, list):
-            content = [c if isinstance(c, dict) else c.model_dump(exclude_none=True) for c in content]
-        out.append({"role": msg["role"], "content": content})
-    return out
+    """History is already plain JSON; pass it through."""
+    return history
 
 
 @app.get("/")

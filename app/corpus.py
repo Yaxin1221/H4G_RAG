@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import functools
 import json
 import math
@@ -121,11 +122,37 @@ def snippet(doc: dict, query: str, width: int = 320) -> str:
     return " ".join(best.split())
 
 
-def country_catalogue_text() -> str:
-    """The country list that goes in the cached system prompt (~1.5k tokens)."""
+_CATEGORY_FLAGS = (("L", "legal-assistance"), ("C", "coi"), ("G", "lgbtqi"))
+
+
+def countries_with(category: str) -> list[str]:
+    """Names of all countries that have a page in `category`."""
     index, _ = load()
-    rows = [f"{r['country']} [{r['have']}]" for r in index["catalogue"]]
-    return "; ".join(rows)
+    flag = next(f for f, c in _CATEGORY_FLAGS if c == category)
+    return [r["country"] for r in index["catalogue"] if flag in r["have"]]
+
+
+def country_coverage(country: str) -> tuple[str, list[str]] | None:
+    """(display name, categories that exist) for a country, or None if unknown."""
+    index, _ = load()
+    by_key = {r["key"]: r for r in index["catalogue"]}
+    for key in candidates(country):
+        row = by_key.get(key)
+        if row:
+            return row["country"], [c for f, c in _CATEGORY_FLAGS if f in row["have"]]
+    return None
+
+
+def suggest_countries(country: str, n: int = 4) -> list[str]:
+    """Closest country names, for when a lookup misses (typos, odd spellings)."""
+    index, _ = load()
+    by_key = {r["key"]: r["country"] for r in index["catalogue"]}
+    found: list[str] = []
+    for key in candidates(country):
+        for m in difflib.get_close_matches(key, by_key, n=n, cutoff=0.6):
+            if by_key[m] not in found:
+                found.append(by_key[m])
+    return found[:n]
 
 
 def prose_catalogue_text(limit_chars: int = 12_000) -> str:

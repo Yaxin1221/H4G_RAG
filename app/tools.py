@@ -1,4 +1,4 @@
-"""Tool surface. Three tools, no vector search.
+"""Tool surface. Four tools, no vector search.
 
 `get_country_page` is the load-bearing one: it turns "what legal help exists in
 Burma?" into an exact (category, country) lookup and hands back the *whole*
@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import Any
 
 from . import corpus
+
+FULL_PAGE_MAX_CHARS = 45_000   # ~11k tokens; longer pages are opened only on request
 
 CATEGORIES = ["legal-assistance", "coi", "lgbtqi"]
 
@@ -45,13 +47,28 @@ TOOLS: list[dict[str, Any]] = [
         "strict": True,
     },
     {
+        "name": "list_countries",
+        "description": (
+            "List every country that has a page in one directory. Only use this when the "
+            "user asks which countries a directory covers; for a specific country just "
+            "call get_country_page, which says what exists if the page is missing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"category": {"type": "string", "enum": CATEGORIES}},
+            "required": ["category"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
         "name": "search_site",
         "description": (
             "Keyword search across the whole site for thematic (non-country) material: "
             "special issues such as gang-based claims or gender in the asylum claim, "
             "self-help kits, guides to UN treaty bodies, medico-legal resources, team "
-            "pages. Returns ranked titles with snippets -- follow up with get_page to read "
-            "one in full before answering from it."
+            "pages. Returns the best-matching page IN FULL plus titles of other matches; if the "
+            "best match is not what the user needs, open another with get_page."
         ),
         "input_schema": {
             "type": "object",
@@ -106,6 +123,26 @@ def _text(msg: str) -> list[dict[str, Any]]:
     return [{"type": "text", "text": msg}]
 
 
+def _country_miss(category: str, country: str) -> str:
+    """Tell the model exactly what exists instead of letting it guess."""
+    cov = corpus.country_coverage(country)
+    if cov:
+        name, cats = cov
+        have = ", ".join(f"'{c}'" for c in cats) or "none"
+        return (
+            f"{name} has no '{category}' page. The directories that do cover {name}: {have}. "
+            f"Do not guess: tell the user '{category}' is not covered for {name}"
+            + (" and offer those instead." if cats else ".")
+        )
+    near = corpus.suggest_countries(country)
+    hint = f" Did the user mean: {', '.join(near)}? Ask if unclear." if near else ""
+    return (
+        f"No country matching {country!r} exists in any directory.{hint} Do not guess: "
+        f"if it is not a spelling or alias issue, tell the user this country is not covered "
+        f"and offer a thematic search instead."
+    )
+
+
 def run_tool(name: str, args: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
     """Execute a tool call. Returns (tool_result content blocks, is_error)."""
     try:
@@ -113,13 +150,12 @@ def run_tool(name: str, args: dict[str, Any]) -> tuple[list[dict[str, Any]], boo
             category, country = args["category"], args["country"]
             doc = corpus.lookup_country(category, country)
             if doc is None:
-                index, _ = corpus.load()
-                return _text(
-                    f"No '{category}' page exists for {country!r}. Do not guess: tell the "
-                    f"user this country is not covered in that directory and offer the "
-                    f"other two directories or a thematic search instead."
-                ), False
+                return _text(_country_miss(category, country)), False
             return [_as_search_result(doc)], False
+
+        if name == "list_countries":
+            names = corpus.countries_with(args["category"])
+            return _text(f"{len(names)} countries in '{args['category']}': " + "; ".join(names)), False
 
         if name == "search_site":
             query, scope = args["query"], args.get("scope", "all")
@@ -130,16 +166,21 @@ def run_tool(name: str, args: dict[str, Any]) -> tuple[list[dict[str, Any]], boo
             hits = corpus.bm25().search(query, k=6, only=only)
             if not hits:
                 return _text("No matches. Try different keywords, or say you could not find it."), False
+            top_id, _ = hits[0]
+            top = all_docs[top_id]
+            rest = hits[1:] if top["chars"] <= FULL_PAGE_MAX_CHARS else hits
             lines = [
                 f"[{doc_id}] {all_docs[doc_id]['title']} -- {all_docs[doc_id]['url']} "
-                f"(updated {all_docs[doc_id]['modified']}, score {score:.1f})\n"
-                f"    {corpus.snippet(all_docs[doc_id], query)}"
-                for doc_id, score in hits
+                f"(updated {all_docs[doc_id]['modified']})"
+                for doc_id, _ in rest
             ]
-            return _text(
-                "Ranked matches (snippets only -- call get_page with an id to read one in "
-                "full before citing it):\n\n" + "\n\n".join(lines)
-            ), False
+            listing = ("Other matches (call get_page with an id to open one in full):\n"
+                       + "\n".join(lines)) if lines else ""
+            if top["chars"] <= FULL_PAGE_MAX_CHARS:
+                return ([_as_search_result(top)] + (_text(listing) if listing else [])), False
+            # Very long page: do not dump it unasked; let the model choose.
+            return _text("Ranked matches, none opened yet (call get_page with an id to read "
+                         "one in full before answering):\n" + listing), False
 
         if name == "get_page":
             doc = corpus.get_doc(str(args["id_or_url"]))

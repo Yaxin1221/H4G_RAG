@@ -3,6 +3,10 @@
 A grounded chatbot over [rightsinexile.org](https://rightsinexile.org): every answer is
 built from that site's pages and carries a link to each page it used.
 
+The model is [Apertus](https://huggingface.co/swiss-ai) (`swiss-ai/Apertus-v1.5-70B`) served
+by Infomaniak AI Tools: Swiss-hosted, OpenAI-compatible API. Any other model Infomaniak
+offers can be swapped in with `INFOMANIAK_MODEL`.
+
 It is **not** a vector-database RAG pipeline, and that is the central design decision.
 
 ## Why there are no embeddings here
@@ -20,8 +24,8 @@ Measured against the live site (`make ingest && make index` prints all of this):
 
 Two facts follow:
 
-**Dumping the whole site into context does not work.** 1.82M tokens against a 1M context
-window. Not close enough to fix by trimming.
+**Dumping the whole site into context does not work.** 1.82M tokens is far beyond the
+context window of any model this runs on. Not close enough to fix by trimming.
 
 **Dense-vector retrieval is the wrong tool for 88% of this site.** 700 of the 800 pages
 are three *parallel* per-country directories, each following one template: refugee
@@ -34,40 +38,85 @@ against Jordan, and which one wins is close to arbitrary.
 And the URL already encodes `(category, country)` exactly. So retrieval here is a
 **lookup, not a similarity search**:
 
-- `data/index.json` — `{category: {country_key: doc_id}}` plus the country catalogue that
-  goes in the cached system prompt (~4.9k tokens, well under 1% of the corpus)
+- `data/index.json` — `{category: {country_key: doc_id}}` plus the country catalogue
 - `data/corpus.json` — whole pages, keyed by WordPress id
 
-Claude resolves the country from the question — Burma/Myanmar, the DRC, the Emirates,
-Holland, Turkey/Türkiye, "my client is Kurdish" → which country — then calls
-`get_country_page(country, category)` and gets the **whole page** back.
+The model passes the country as the user wrote it and the lookup resolves it in code
+(`ingest/countries.py`): Burma/Myanmar, the DRC, the Emirates, Holland, Turkey/Türkiye.
+`get_country_page(country, category)` then returns the **whole page**. A miss never leaves
+the model guessing: if the country exists but that directory does not, the tool names the
+directories that do; if nothing matches, it suggests close spellings ("Jordon" → Jordan)
+or says the country is not covered.
 
 **Nothing is chunked, deliberately.** These pages are lists of organisations with contact
 details. Splitting them separates an NGO from its phone number, which is not a quality
-regression but a wrong answer. The largest page on the site is 88k chars (~24k tokens),
-so a whole page fits a tool result comfortably.
+regression but a wrong answer. The largest page on the site is 88k chars (~24k tokens).
 
 For the 98 thematic pages — where a question genuinely needs prose, not a lookup — there
-is plain **BM25** over whole pages (`search_site` → `get_page`). Lexical beats semantic
-here too: real questions name countries, instruments, organisations and case names, and
-those match on the literal token. The index builds in 0.3s with no dependencies.
+is plain **BM25** over whole pages. Lexical beats semantic here too: real questions name
+countries, instruments, organisations and case names, and those match on the literal
+token. The index builds in 0.3s with no dependencies. `search_site` returns the best match
+**in full** plus the titles of the other matches, so most thematic questions take one tool
+call; only a best match over 45k chars is left unopened for the model to choose.
 
-Citations come from `search_result` content blocks with `citations: {enabled: true}`, so
-the model's citations arrive as `search_result_location` objects already carrying the page
-URL and title — clickable sources with no lookup table on our side, and no prompting for
-a citation format.
+The four tools:
+
+| Tool | What it does |
+|---|---|
+| `get_country_page` | exact `(country, category)` lookup, whole page back |
+| `list_countries` | every country in one directory, for "which countries do you cover?" |
+| `search_site` | BM25 over whole pages; best match in full, other titles listed |
+| `get_page` | open any page by id or URL |
+
+The country catalogue and the thematic page list are **not** in the system prompt. The
+prompt is instructions only (~4.7k chars, ~1.2k tokens); what exists is discovered through
+the tools.
+
+## Sources and the grounding guard
+
+Every tool result starts with `SOURCE:` (the page URL) and `TITLE:` (which includes the
+last-modified date). The model links the pages it used inline as Markdown, and the UI
+lists every page fetched during the turn under "Sources".
+
+The prompt says to answer only from tool results. Models break that rule: invented links,
+a phone number from memory, an email with one letter changed, even a printed fake "tool
+call". So the final answer is checked in code (`app/guard.py`) before the user sees it.
+Every URL, email address, phone number and ISO date in the answer must appear in a tool
+result from this conversation (or in the system prompt). If one does not:
+
+1. **Repair** — a near-miss email or URL (an added accent, one changed letter) is replaced
+   by the exact value from the page, only when a single real value is clearly the original.
+2. **Retry** — otherwise the model gets one hidden correction and rewrites the answer.
+3. **Scrub** — if the rewrite still fails, the item is replaced by a visible marker such as
+   `[number removed: not found on the site]`. An answer that fakes a tool call is replaced
+   by a fixed "could not verify" message.
+
+The cost: the answer is buffered for checking, so it arrives in one piece instead of
+streaming token by token. The UI shows "looking up …" while tools run.
+
+The guard only checks things that can be matched literally. An invented organisation
+name or a wrong legal claim in plain prose passes it; that still rests on the prompt and
+on human testing (see below).
+
+Answer length is also enforced in code, because "be brief" is not reliably obeyed:
+`ANSWER_CHAR_LIMIT` (default 2000) cuts at the next sentence or line end and appends a
+note, and `MAX_OUTPUT_TOKENS` (default 1500) is the backstop. Both can be set in `.env`.
 
 ## Quickstart
 
 ```bash
 make setup                  # venv + deps, copies .env.example -> .env
-$EDITOR .env                # set ANTHROPIC_API_KEY
+$EDITOR .env                # set INFOMANIAK_API_KEY and INFOMANIAK_PRODUCT_ID (optional: INFOMANIAK_MODEL)
 make ingest                 # ~10s: pull all 800 pages from the WP REST API
 make index                  # build the lookup tables
 make check                  # offline checks, no API key needed
 make ask Q="Who provides legal aid to refugees in Jordan?"
 make serve                  # http://127.0.0.1:8000
 ```
+
+To find the two Infomaniak values: create an API token with scope `ai-tools` at
+[manager.infomaniak.com](https://manager.infomaniak.com), then
+`GET https://api.infomaniak.com/1/ai` with that token returns the product id.
 
 The WordPress REST API serves every published page **without authentication**, so no
 WordPress credentials are needed. `WP_USER` / `WP_APP_PASSWORD` in `.env` exist only if
@@ -82,13 +131,15 @@ ingest/fetch_wp.py     pull published pages from /wp-json/wp/v2/*  -> data/raw/p
 ingest/extract.py      Elementor HTML -> text, hrefs folded into markdown links
 ingest/countries.py    country-name normalisation + alias table
 ingest/build_index.py  classify by WP parent id -> data/index.json + data/corpus.json
-app/corpus.py          lookups, BM25, snippets, catalogue text
-app/tools.py           get_country_page / search_site / get_page -> search_result blocks
-app/chat.py            system prompt, streaming tool loop, citations
+app/corpus.py          lookups, BM25, country coverage and spelling suggestions
+app/tools.py           get_country_page / list_countries / search_site / get_page
+app/chat.py            system prompt, tool loop, length limits, guard retry
+app/guard.py           grounding check: find, repair, scrub ungrounded items
 app/server.py          FastAPI + SSE, rate limiting
-web/index.html         minimal chat UI, light/dark, mobile
+web/index.html         minimal chat UI, Markdown rendering, light/dark, mobile
 scripts/ask.py         CLI harness
 scripts/check.py       offline checks
+scripts/compare_models.py   same questions through several models, mechanical scores
 ```
 
 Why the REST API and not a crawler: `content.rendered` excludes the site nav and footer.
@@ -103,21 +154,31 @@ gives a real `modified` date per page, which this corpus needs (see below).
 Staleness is the real risk on this site, more than retrieval quality. The pages are full
 of NGO phone numbers, email addresses and named contact persons that decay, and parts of
 the site have not been touched since 2023. So every page's last-modified date is folded
-into the `search_result` title, the system prompt tells the model to surface it whenever
-it gives a contact, and the UI repeats the caveat. The date deliberately lives in the
-tool result and **not** in the cached system prefix, where a changing value would
-invalidate the cache on every request.
+into the `TITLE:` line of the tool result, the system prompt tells the model to surface it
+whenever it gives a contact, and the UI repeats the caveat. Because the date comes from a
+tool result, the guard also rejects a "last updated" date the model made up.
 
-## Cost and caching
+## Cost
 
-The system prefix (instructions + 237-country catalogue + thematic page list) is ~4.9k
-tokens and carries `cache_control`, so it is a cache read on every request after the
-first. Per-question cost is dominated by the pages fetched: a median country page is
-~5.3k chars (~1.4k tokens). `make ask` prints `cache_read` / `cache_write` per turn — if
-`cache_read` stays 0 across questions, something volatile crept into the prefix.
+The system prompt is static and small (~1.2k tokens), so per-question cost is dominated
+by the pages fetched: a median country page is ~5.3k chars (~1.4k tokens). In the model
+comparison below a question used about 10k input tokens in total across its tool rounds.
+A guard retry adds one more model call. `make ask` prints input/output tokens per call,
+and `cache_read` when the provider reports cached prompt tokens.
 
-Effort is set to `medium`: on a website, answer latency matters, and the hard part here
-is a lookup rather than a reasoning problem.
+## Comparing models
+
+```bash
+.venv/bin/python scripts/compare_models.py                    # Apertus, Qwen, Gemma
+.venv/bin/python scripts/compare_models.py MODEL [MODEL ...] --repeats 2
+```
+
+Runs 15 fixed questions (country lookups, aliases, partial coverage, a country that does
+not exist, thematic questions, a prediction request, a deadline question, one in Spanish)
+through each model with the hard answer cap off. It prints mechanical scores per model
+(right first tool, ungrounded URLs and contacts, answer length, tokens, latency, guard
+retries and scrubs) and writes every answer to `data/eval/answers.md`. The scores do not
+measure answer quality; read the answers for that. `data/eval/` is git-ignored.
 
 ## Before this goes public
 
@@ -136,11 +197,15 @@ is a lookup rather than a reasoning problem.
 - [ ] Put it behind TLS and a real origin; `X-Accel-Buffering: no` is already set so nginx
       won't buffer the SSE stream.
 - [ ] Decide whether conversation history stays client-side (as now) or moves server-side
-      keyed by session.
+      keyed by session. Client-held history is filtered to user/assistant/tool turns, so
+      it cannot carry a system prompt, but a client can still send forged tool results,
+      and the guard treats those as grounded.
 
 ## Status
 
-Everything from the WordPress fetch through to the assembled request is exercised against
-the live site by `make check` (30 checks, all passing). The Anthropic call itself has not
-yet been run — there were no API credentials on the machine where this was built. Put a
-key in `.env` and run `make ask Q="..."` as the first real test.
+`make check` exercises everything up to the model call against the live site, plus the
+guard and the length limit: 52 checks, all passing, no API key needed. The model call
+itself has been run through `scripts/compare_models.py` (15 questions × 2 repeats × 3
+models). In that run the guard intervened on 6 of 90 answers: invented or altered URLs,
+phone numbers, a page date and one fake tool call. Answer quality has not been reviewed
+by anyone at AsyLex yet.

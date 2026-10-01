@@ -32,6 +32,8 @@ def ask(question: str, history: list | None = None) -> list:
             print(f"{DIM}[in {ev['input']} out {ev['output']} "
                   f"cache_read {ev['cache_read']} cache_write {ev['cache_write']}]{RESET}",
                   file=sys.stderr, flush=True)
+        elif kind == "guard":
+            print(f"{DIM}[guard {ev['action']}: {ev['violations']}]{RESET}", file=sys.stderr, flush=True)
         elif kind == "error":
             print(f"\n{BOLD}error:{RESET} {ev.get('message')} {ev.get('details','')}")
         elif kind == "done":

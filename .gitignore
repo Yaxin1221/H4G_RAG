@@ -5,6 +5,7 @@
 data/raw/
 data/corpus.json
 data/index.json
+data/eval/
 
 # python
 __pycache__/
