@@ -3,7 +3,7 @@
 A grounded chatbot over [rightsinexile.org](https://rightsinexile.org): every answer is
 built from that site's pages and carries a link to each page it used.
 
-The model is [Apertus](https://huggingface.co/swiss-ai) (`swiss-ai/Apertus-v1.5-70B`) served
+The model is [Gemma](https://huggingface.co/google) (`google/gemma-4-31B-it`) served
 by Infomaniak AI Tools: Swiss-hosted, OpenAI-compatible API. Any other model Infomaniak
 offers can be swapped in with `INFOMANIAK_MODEL`.
 
@@ -16,9 +16,10 @@ Measured against the live site (`make ingest && make index` prints all of this):
 | | |
 |---|---|
 | Published pages | **800** |
-| `legal-assistance-by-country` | 233 |
-| `country-of-origin-information` | 233 |
-| `sexual-orientation-and-gender-identity-country-list` | 234 |
+| `legal-assistance-by-country` | 233 countries |
+| `country-of-origin-information` | 233 countries |
+| `sexual-orientation-and-gender-identity-country-list` | 234 countries |
+| Duplicate country pages on the site (Isle of Man, DPRK), one of each pair kept in the lookup | 2 |
 | Everything else (special issues, self-help kits, treaty-body guides, team) | 98 |
 | Whole site, boilerplate stripped | **6.8M chars ≈ 1.82M tokens** |
 
@@ -152,8 +153,8 @@ gives a real `modified` date per page, which this corpus needs (see below).
 `make refresh` re-pulls, rebuilds and re-checks. Run it on a schedule — weekly is fine.
 
 Staleness is the real risk on this site, more than retrieval quality. The pages are full
-of NGO phone numbers, email addresses and named contact persons that decay, and parts of
-the site have not been touched since 2023. So every page's last-modified date is folded
+of NGO phone numbers, email addresses and named contact persons that decay, and 446 of
+the 800 pages were last modified in 2023. So every page's last-modified date is folded
 into the `TITLE:` line of the tool result, the system prompt tells the model to surface it
 whenever it gives a contact, and the UI repeats the caveat. Because the date comes from a
 tool result, the guard also rejects a "last updated" date the model made up.
@@ -161,8 +162,9 @@ tool result, the guard also rejects a "last updated" date the model made up.
 ## Cost
 
 The system prompt is static and small (~1.2k tokens), so per-question cost is dominated
-by the pages fetched: a median country page is ~5.3k chars (~1.4k tokens). In the model
-comparison below a question used about 10k input tokens in total across its tool rounds.
+by the pages fetched: a median country page is ~5.4k chars (~1.5k tokens). In the model
+comparison below a question used 9.6k to 11.1k input tokens on average, depending on the
+model, in total across its tool rounds.
 A guard retry adds one more model call. `make ask` prints input/output tokens per call,
 and `cache_read` when the provider reports cached prompt tokens.
 
@@ -207,5 +209,8 @@ measure answer quality; read the answers for that. `data/eval/` is git-ignored.
 guard and the length limit: 52 checks, all passing, no API key needed. The model call
 itself has been run through `scripts/compare_models.py` (15 questions × 2 repeats × 3
 models). In that run the guard intervened on 6 of 90 answers: invented or altered URLs,
-phone numbers, a page date and one fake tool call. Answer quality has not been reviewed
-by anyone at AsyLex yet.
+phone numbers, an email address, a page date and one fake tool call. By model that is
+3 of 30 for Apertus, 3 of 30 for Gemma and 0 of 30 for Qwen; one Qwen answer (the Spanish
+question) was cut off at the 4000-token backstop instead. Thirty answers per model is too
+few to rank them on. The project started on Apertus and now runs on Gemma; Apertus stays
+in the comparison list. Answer quality has not been reviewed by anyone at AsyLex yet.

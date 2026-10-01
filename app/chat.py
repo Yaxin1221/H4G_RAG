@@ -1,7 +1,7 @@
 """The chat turn: system prompt, tool loop, streamed text + citations.
 
 Talks to Infomaniak's AI Tools (Swiss-hosted, OpenAI-compatible) -- by default
-Apertus. Emits plain dicts so the CLI (scripts/ask.py) and the SSE endpoint
+Gemma. Emits plain dicts so the CLI (scripts/ask.py) and the SSE endpoint
 (app/server.py) share one implementation.
 """
 
@@ -20,7 +20,7 @@ from .tools import TOOLS, run_tool
 
 load_dotenv()
 
-MODEL = os.environ.get("INFOMANIAK_MODEL", "swiss-ai/Apertus-v1.5-70B")
+MODEL = os.environ.get("INFOMANIAK_MODEL", "google/gemma-4-31B-it")
 MAX_TOOL_ROUNDS = 6
 HISTORY_TURNS = 10
 # Hard limits, because the model does not reliably obey "be brief".
