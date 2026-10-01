@@ -316,6 +316,80 @@ through each model with the hard answer cap off. It prints mechanical scores per
 retries and scrubs) and writes every answer to `data/eval/answers.md`. The scores do not
 measure answer quality; read the answers for that. `data/eval/` is git-ignored.
 
+### Results
+
+Run of 1 October 2026: 15 questions × 2 repeats, so 30 answers per model.
+
+| | Gemma 4 31B (default) | Qwen 3.5 122B | Apertus v1.5 70B |
+|---|---|---|---|
+| Model id | `google/gemma-4-31B-it` | `Qwen/Qwen3.5-122B-A10B-FP8` | `swiss-ai/Apertus-v1.5-70B` |
+| Right first tool | 24 / 24 | 24 / 24 | 22 / 24 |
+| Answers the guard had to correct | 3 / 30 | 0 / 30 | 3 / 30 |
+| Answers cut off at the token backstop | 0 | 1 | 0 |
+| Answer length, mean | 177 words | 259 words | 277 words |
+| Time per answer, median (mean) | 8.4 s (22.8 s) | 9.6 s (11.4 s) | 10.1 s (10.6 s) |
+| Input tokens per question, mean | 11,070 | 11,113 | 9,556 |
+| Output tokens per question, mean | 493 | 1,000 | 646 |
+
+- **Right first tool** counts the 12 questions that have an expected tool (24 answers).
+  Both Apertus misses are the medical-evidence question, answered without any tool call.
+- **Guard corrections**: all three Gemma cases were fixed by the one retry. One Apertus
+  answer still had two invented links after the retry, and they were scrubbed.
+- **Gemma's time is uneven**: 8 of its 30 answers took over 30 s (the slowest 103 s),
+  against 2 for Qwen and none for Apertus. That is why its mean is far above its median.
+- Thirty answers per model is too few to rank the models on these numbers.
+
+### Tokens per question, by question type
+
+Same run, split by what the question asks for. Each cell is mean input / mean output
+tokens for one question, summed over all its model calls (tool rounds and guard retries).
+
+| Question type | Questions | Tool calls | Gemma 4 31B | Qwen 3.5 122B | Apertus v1.5 70B | All models |
+|---|---|---|---|---|---|---|
+| Country-specific (one country directory page) | 8 | 1.1 | 9,978 / 604 | 9,667 / 1,328 | 10,002 / 814 | **9,882 / 915** |
+| Broad (thematic, via `search_site`) | 4 | 1.3 | 12,620 / 417 | 13,024 / 672 | 10,630 / 633 | **12,092 / 574** |
+| Other (country not covered, prediction, deadline) | 3 | 0.9 | 11,915 / 298 | 12,419 / 564 | 6,931 / 215 | **10,422 / 359** |
+
+- **Broad questions use about 20% more input tokens** than country questions. `search_site`
+  returns a whole thematic page, and when the best match is too long to return, the model
+  opens it with a second call (`get_page`), which sends the conversation again.
+- **Country questions produce the longest answers**, because they list organisations with
+  their contact details.
+- **Page size decides the input cost, more than the question type.** Across the country
+  questions the mean runs from 5.4k input tokens (DRC country-of-origin page) to 18.9k
+  (Türkiye legal assistance). Across the broad ones it runs from 4.0k (medical evidence) to
+  21.8k (gang-based claims, which needs the second call).
+- **The floor is about 1.3k input tokens**: an answer with no tool call sends only the
+  system prompt and the tool definitions. Apertus answered the medical-evidence question
+  this way, which lowers its broad average without being a better result.
+- A guard retry sends the whole conversation once more. The most expensive single answer
+  (31.6k input tokens, Apertus on Türkiye) was a retry.
+- These are 8 and 4 questions, each asked twice per model, so read the averages as rough.
+
+### Monthly price for 5,000 questions
+
+Assumes 5,000 single questions a month with no follow-up questions, and the mean token
+use per question measured above (all tool rounds and guard retries included). Prices are
+Infomaniak's [list prices](https://www.infomaniak.com/en/hosting/ai-services/prices) on
+1 October 2026.
+
+| | Gemma 4 31B | Qwen 3.5 122B | Apertus v1.5 70B |
+|---|---|---|---|
+| Input price, CHF per 1M tokens | 0.20 | 0.40 | 0.70 |
+| Output price, CHF per 1M tokens | 0.40 | 3.20 | 2.50 |
+| Input tokens per month | 55.3M | 55.6M | 47.8M |
+| Output tokens per month | 2.5M | 5.0M | 3.2M |
+| Input cost, CHF | 11.07 | 22.23 | 33.44 |
+| Output cost, CHF | 0.99 | 16.01 | 8.07 |
+| **Total per month, CHF** | **12.06** | **38.23** | **41.52** |
+| Per question, CHF | 0.0024 | 0.0076 | 0.0083 |
+
+Input tokens make up most of the bill, because every question sends whole pages to the
+model. Follow-up questions would cost more than a first question: the earlier turns and
+their tool results are sent again. The comparison ran without the answer length limits;
+in production `MAX_OUTPUT_TOKENS` (1500) caps the output side, which matters mostly for
+Qwen.
+
 ## Before this goes public
 
 - [ ] **Rate limiting is per-process.** `RATE_LIMIT_PER_HOUR` (default 30/IP) works for
